@@ -108,3 +108,4 @@ st.caption(
     "Model: Logistic Regression | Variables: Max/Min Temperature, Rainfall, "
     "Relative Humidity | Data sources: NASA POWER (weather), Bureau of Plant "
     "Industry (outbreak records)"
+)
