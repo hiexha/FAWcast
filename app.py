@@ -1,66 +1,57 @@
-import math
 import streamlit as st
 
-BETA_0 = -6.0
-BETA_1 = 0.15
-BETA_2 = 0.05
-BETA_3 = 0.02
-BETA_4 = 0.03
+BETA = {
+    "intercept": -32.6401, "tmax": 0.2790, "tmin": -0.3650,
+    "rainfall": -0.0048, "humidity": -0.0284, "prev_outbreak": 2.7233,
+    "prev_rainfall": -0.0639, "prev_tmax": 0.5805, "prev_tmin": 0.5923,
+    "rain_cum_2q": 0.0643,
+}
 
-RISK_TIERS = [
-    (0.00, 0.30, "Low Risk", "#2e7d32", ["Continue routine field monitoring.", "Maintain standard pest management practices.", "Educate farmers on Fall Armyworm identification and reporting."]),
-    (0.30, 0.60, "Moderate Risk", "#f9a825", ["Increase field inspections.", "Deploy pheromone traps for early detection.", "Prepare pest control materials and coordinate with local agricultural offices."]),
-    (0.60, 0.80, "High Risk", "#ef6c00", ["Implement immediate monitoring in affected areas.", "Recommend timely Integrated Pest Management (IPM) measures.", "Advise farmers to apply appropriate control methods once infestation is confirmed."]),
-    (0.80, 1.001, "Very High Risk", "#c62828", ["Issue an outbreak advisory.", "Intensify surveillance across nearby farms."]),
-]
+REGION_U = {
+    "Bicol Region": -0.2971, "Cagayan Valley": 0.2989,
+    "Ilocos Region": -1.6065, "Northern Mindanao": 0.1275,
+    "SOCCSKSARGEN": 0.9616, "Zamboanga Peninsula": 0.5156,
+}
 
-def compute_z(tmax, tmin, rainfall, humidity):
-    return BETA_0 + BETA_1 * tmax + BETA_2 * tmin + BETA_3 * rainfall + BETA_4 * humidity
+def classify(p):
+    if p < 0.30: return "Low Risk"
+    if p < 0.60: return "Moderate Risk"
+    if p < 0.80: return "High Risk"
+    return "Very High Risk"
 
-def compute_probability(z):
-    return 1 / (1 + math.exp(-z))
+st.set_page_config(page_title="FAWcast Risk Calculator")
+st.title("FAWcast Outbreak-Risk Calculator")
+st.caption("Hierarchical logistic regression model — Table IV & V")
 
-def classify_risk(p):
-    for low, high, label, color, actions in RISK_TIERS:
-        if low <= p < high:
-            return label, color, actions
-    return RISK_TIERS[-1][2], RISK_TIERS[-1][3], RISK_TIERS[-1][4]
+region = st.selectbox("Region", ["Untrained (population average)"] + list(REGION_U.keys()))
 
-st.set_page_config(page_title="FAWcast", page_icon="corn", layout="centered")
-st.title("FAWcast")
-st.caption("Weather-Based Fall Armyworm Outbreak Risk Predictor for Philippine Corn")
+st.subheader("Same-quarter weather")
+c1, c2 = st.columns(2)
+tmax = c1.number_input("Max Temp (°C)", value=31.5)
+tmin = c2.number_input("Min Temp (°C)", value=23.2)
+rainfall = c1.number_input("Rainfall (mm/day)", value=21.6)
+humidity = c2.number_input("Relative Humidity (%)", value=82.8)
 
-st.warning("This app is currently running on placeholder coefficients for demonstration purposes. Predictions will not be accurate until the real fitted model coefficients are entered.")
+st.subheader("Previous quarter")
+prev_outbreak = st.radio("Outbreak occurred?", ["No", "Yes"], index=1)
+c3, c4 = st.columns(2)
+prev_tmax = c3.number_input("Prev. Max Temp (°C)", value=31.5)
+prev_tmin = c4.number_input("Prev. Min Temp (°C)", value=23.2)
+prev_rainfall = c3.number_input("Prev. Rainfall (mm/day)", value=21.6)
+rain_cum_2q = c4.number_input("2-Qtr Cumulative Rain (mm)", value=43.2)
 
-st.subheader("Enter Weather Conditions")
-
-col1, col2 = st.columns(2)
-with col1:
-    tmax = st.number_input("Maximum Temperature (C)", min_value=15.0, max_value=45.0, value=30.0, step=0.1)
-    rainfall = st.number_input("Rainfall (mm/day)", min_value=0.0, max_value=500.0, value=5.0, step=0.1)
-with col2:
-    tmin = st.number_input("Minimum Temperature (C)", min_value=10.0, max_value=35.0, value=24.0, step=0.1)
-    humidity = st.number_input("Relative Humidity (%)", min_value=0.0, max_value=100.0, value=80.0, step=0.1)
-
-if st.button("Predict Outbreak Risk", type="primary", use_container_width=True):
-    z = compute_z(tmax, tmin, rainfall, humidity)
-    p = compute_probability(z)
-    label, color, actions = classify_risk(p)
-
-    st.divider()
-    st.subheader("Prediction Result")
-
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("Predicted Outbreak Probability", str(round(p * 100, 1)) + "%")
-    with col2:
-        st.markdown("Risk Level: " + label)
-
-    st.progress(min(max(p, 0.0), 1.0))
-
-    st.markdown("Recommended Actions:")
-    for a in actions:
-        st.markdown("- " + a)
+u = REGION_U.get(region, 0.0)
+log_odds = (
+    BETA["intercept"] + BETA["tmax"]*tmax + BETA["tmin"]*tmin +
+    BETA["rainfall"]*rainfall + BETA["humidity"]*humidity +
+    BETA["prev_outbreak"]*(1 if prev_outbreak == "Yes" else 0) +
+    BETA["prev_rainfall"]*prev_rainfall + BETA["prev_tmax"]*prev_tmax +
+    BETA["prev_tmin"]*prev_tmin + BETA["rain_cum_2q"]*rain_cum_2q + u
+)
+p = 1 / (1 + 2.718281828 ** -log_odds)
+tier = classify(p)
 
 st.divider()
-st.caption("Model: Logistic Regression. Data sources: NASA POWER (weather), Bureau of Plant Industry (outbreak records)")
+st.metric("P(Outbreak)", f"{p*100:.1f}%")
+st.write(f"**Risk Tier:** {tier}")
+st.caption(f"Region used: {region} (u = {u:.4f})")
