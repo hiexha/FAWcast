@@ -147,4 +147,4 @@ if calculate:
         st.metric("P(Outbreak)", f"{p*100:.1f}%")
         st.markdown(f"**Risk Tier:** :orange[{tier}]" if tier in ("Moderate Risk", "High Risk") else f"**Risk Tier:** {tier}")
         st.caption(TIER_ACTION[tier])
-        st.caption(f"Region used:) {region}" + (f)" (u = {u:.4f})" if region in REGIONS 
+        st.caption(f"Region used): {region}" + (f)" (u = {u:.4f})" if region in REGIONS 
