@@ -42,29 +42,34 @@ def classify(p):
 
 
 def base_map():
-    """Draws all 6 regions as small, dim gray markers for context."""
+    """Draws the Philippines only, with all 6 regions as small labeled gray markers."""
     lats = [v["lat"] for v in REGIONS.values()]
     lons = [v["lon"] for v in REGIONS.values()]
     names = list(REGIONS.keys())
 
     fig = go.Figure(go.Scattergeo(
-        lat=lats, lon=lons, text=names,
-        mode="markers",
-        marker=dict(size=8, color="#9a9a9a", opacity=0.5),
+        lat=lats, lon=lons,
+        text=names,
+        mode="markers+text",
+        textposition="top center",
+        textfont=dict(size=10, color="#4a4030"),
+        marker=dict(size=10, color="#9a9a9a", opacity=0.6, line=dict(width=1, color="#6b5f4a")),
         hoverinfo="text",
     ))
     fig.update_geos(
         scope="asia",
-        center=dict(lat=12.5, lon=122.5),
-        projection_scale=6,
+        lataxis_range=[4, 21],
+        lonaxis_range=[116, 128],
         showland=True, landcolor="#f0ead9",
         showocean=True, oceancolor="#dce8ec",
         showcountries=True, countrycolor="#b5aa8f",
         showcoastlines=True, coastlinecolor="#b5aa8f",
+        showsubunits=False,
+        resolution=50,
     )
     fig.update_layout(
         margin=dict(l=0, r=0, t=0, b=0),
-        height=420,
+        height=520,
         showlegend=False,
     )
     return fig
@@ -75,7 +80,7 @@ def add_region_marker(fig, region_name, size, color, opacity):
     fig.add_trace(go.Scattergeo(
         lat=[r["lat"]], lon=[r["lon"]],
         mode="markers",
-        marker=dict(size=size, color=color, opacity=opacity, line=dict(width=1, color="#2b2418")),
+        marker=dict(size=size, color=color, opacity=opacity, line=dict(width=2, color="#2b2418")),
         hoverinfo="skip",
         showlegend=False,
     ))
@@ -84,22 +89,22 @@ def add_region_marker(fig, region_name, size, color, opacity):
 
 st.set_page_config(page_title="FAWcast Risk Calculator", layout="wide")
 st.title("FAWcast Outbreak-Risk Calculator")
-st.caption("Hierarchical logistic regression model — Table IV & V")
+st.caption("Hierarchical logistic regression model - Table IV & V")
 
 region = st.selectbox("Region", list(REGIONS.keys()) + ["Untrained (population average)"])
 
 st.subheader("Same-quarter weather")
 c1, c2 = st.columns(2)
-tmax = c1.number_input("Max Temp (°C)", value=31.5)
-tmin = c2.number_input("Min Temp (°C)", value=23.2)
+tmax = c1.number_input("Max Temp (C)", value=31.5)
+tmin = c2.number_input("Min Temp (C)", value=23.2)
 rainfall = c1.number_input("Rainfall (mm/day)", value=21.6)
 humidity = c2.number_input("Relative Humidity (%)", value=82.8)
 
 st.subheader("Previous quarter")
 prev_outbreak = st.radio("Outbreak occurred?", ["No", "Yes"], index=1)
 c3, c4 = st.columns(2)
-prev_tmax = c3.number_input("Prev. Max Temp (°C)", value=31.5)
-prev_tmin = c4.number_input("Prev. Min Temp (°C)", value=23.2)
+prev_tmax = c3.number_input("Prev. Max Temp (C)", value=31.5)
+prev_tmin = c4.number_input("Prev. Min Temp (C)", value=23.2)
 prev_rainfall = c3.number_input("Prev. Rainfall (mm/day)", value=21.6)
 rain_cum_2q = c4.number_input("2-Qtr Cumulative Rain (mm)", value=43.2)
 
@@ -108,7 +113,6 @@ calculate = st.button("Calculate Risk", type="primary")
 map_slot = st.empty()
 result_slot = st.empty()
 
-# Show a plain, unfilled map before the first calculation
 map_slot.plotly_chart(base_map(), use_container_width=True)
 
 if calculate:
@@ -123,19 +127,18 @@ if calculate:
     p = 1 / (1 + 2.718281828 ** -log_odds)
     tier = classify(p)
     color = TIER_COLORS[tier]
-    target_size = 14 + 46 * p  # bigger marker = higher risk
+    target_size = 18 + 46 * p
 
     if region in REGIONS:
-        # Animate: marker grows and darkens from empty to full risk color
         steps = 18
         for i in range(1, steps + 1):
             progress = i / steps
             fig = base_map()
             add_region_marker(
                 fig, region,
-                size=6 + (target_size - 6) * progress,
+                size=8 + (target_size - 8) * progress,
                 color=color,
-                opacity=0.25 + 0.65 * progress,
+                opacity=0.3 + 0.65 * progress,
             )
             map_slot.plotly_chart(fig, use_container_width=True, key=f"frame_{i}")
             time.sleep(0.03)
@@ -145,6 +148,9 @@ if calculate:
     with result_slot.container():
         st.divider()
         st.metric("P(Outbreak)", f"{p*100:.1f}%")
-        st.markdown(f"**Risk Tier:** :orange[{tier}]" if tier in ("Moderate Risk", "High Risk") else f"**Risk Tier:** {tier}")
+        st.markdown(f"**Risk Tier:** {tier}")
         st.caption(TIER_ACTION[tier])
-        st.caption(f"Region used: {region} (u = {u:.4f})") if region in REGIONS else None
+        if region in REGIONS:
+            st.caption(f"Region used: {region} (u = {u:.4f})")
+        else:
+            st.caption("Region used: untrained, population average")
