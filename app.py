@@ -1,4 +1,5 @@
 import time
+import math
 import streamlit as st
 import plotly.graph_objects as go
 
@@ -9,14 +10,15 @@ BETA = {
     "rain_cum_2q": 0.0643,
 }
 
-# Region random intercepts (Table V) + approximate centroid coordinates
+# Region random intercepts (Table V), centroid coordinates, and approximate
+# land area in sq km (used to size each region's filled circle proportionally)
 REGIONS = {
-    "Bicol Region":          {"u": -0.2971, "lat": 13.42, "lon": 123.41},
-    "Cagayan Valley":        {"u":  0.2989, "lat": 17.61, "lon": 121.73},
-    "Ilocos Region":         {"u": -1.6065, "lat": 16.08, "lon": 120.62},
-    "Northern Mindanao":     {"u":  0.1275, "lat":  8.15, "lon": 124.24},
-    "SOCCSKSARGEN":          {"u":  0.9616, "lat":  6.30, "lon": 124.85},
-    "Zamboanga Peninsula":   {"u":  0.5156, "lat":  7.84, "lon": 122.27},
+    "Bicol Region":          {"u": -0.2971, "lat": 13.42, "lon": 123.41, "area_km2": 18155},
+    "Cagayan Valley":        {"u":  0.2989, "lat": 17.61, "lon": 121.73, "area_km2": 29836},
+    "Ilocos Region":         {"u": -1.6065, "lat": 16.08, "lon": 120.62, "area_km2": 13012},
+    "Northern Mindanao":     {"u":  0.1275, "lat":  8.15, "lon": 124.24, "area_km2": 20496},
+    "SOCCSKSARGEN":          {"u":  0.9616, "lat":  6.30, "lon": 124.85, "area_km2": 22513},
+    "Zamboanga Peninsula":   {"u":  0.5156, "lat":  7.84, "lon": 122.27, "area_km2": 17056},
 }
 
 TIER_COLORS = {
@@ -41,21 +43,48 @@ def classify(p):
     return "Very High Risk"
 
 
-def base_map():
-    """Draws the Philippines only, with all 6 regions as small labeled gray markers."""
-    lats = [v["lat"] for v in REGIONS.values()]
-    lons = [v["lon"] for v in REGIONS.values()]
-    names = list(REGIONS.keys())
+def region_circle(lat, lon, area_km2, n_points=60):
+    """Builds a circle polygon (lat/lon points) whose area approximates
+    the region's real land area, centered on its centroid."""
+    radius_km = math.sqrt(area_km2 / math.pi)
+    lat_rad = math.radians(lat)
+    km_per_deg_lat = 110.574
+    km_per_deg_lon = 111.320 * math.cos(lat_rad)
 
-    fig = go.Figure(go.Scattergeo(
-        lat=lats, lon=lons,
-        text=names,
-        mode="markers+text",
-        textposition="top center",
-        textfont=dict(size=10, color="#4a4030"),
-        marker=dict(size=10, color="#9a9a9a", opacity=0.6, line=dict(width=1, color="#6b5f4a")),
-        hoverinfo="text",
-    ))
+    lats, lons = [], []
+    for i in range(n_points + 1):
+        angle = 2 * math.pi * i / n_points
+        dlat = (radius_km * math.sin(angle)) / km_per_deg_lat
+        dlon = (radius_km * math.cos(angle)) / km_per_deg_lon
+        lats.append(lat + dlat)
+        lons.append(lon + dlon)
+    return lats, lons
+
+
+def base_map():
+    """Draws the Philippines only, with all 6 regions as faint outlined circles."""
+    fig = go.Figure()
+    for name, r in REGIONS.items():
+        lats, lons = region_circle(r["lat"], r["lon"], r["area_km2"])
+        fig.add_trace(go.Scattergeo(
+            lat=lats, lon=lons,
+            mode="lines",
+            line=dict(width=1.2, color="#9a9a9a"),
+            fill="toself",
+            fillcolor="rgba(154,154,154,0.15)",
+            hoverinfo="skip",
+            showlegend=False,
+        ))
+        fig.add_trace(go.Scattergeo(
+            lat=[r["lat"]], lon=[r["lon"]],
+            mode="text",
+            text=[name],
+            textposition="middle center",
+            textfont=dict(size=9, color="#4a4030"),
+            hoverinfo="skip",
+            showlegend=False,
+        ))
+
     fig.update_geos(
         scope="asia",
         lataxis_range=[4, 21],
@@ -75,12 +104,16 @@ def base_map():
     return fig
 
 
-def add_region_marker(fig, region_name, size, color, opacity):
+def fill_region(fig, region_name, color, opacity):
     r = REGIONS[region_name]
+    lats, lons = region_circle(r["lat"], r["lon"], r["area_km2"])
     fig.add_trace(go.Scattergeo(
-        lat=[r["lat"]], lon=[r["lon"]],
-        mode="markers",
-        marker=dict(size=size, color=color, opacity=opacity, line=dict(width=2, color="#2b2418")),
+        lat=lats, lon=lons,
+        mode="lines",
+        line=dict(width=1.5, color="#2b2418"),
+        fill="toself",
+        fillcolor=color,
+        opacity=opacity,
         hoverinfo="skip",
         showlegend=False,
     ))
@@ -127,19 +160,13 @@ if calculate:
     p = 1 / (1 + 2.718281828 ** -log_odds)
     tier = classify(p)
     color = TIER_COLORS[tier]
-    target_size = 18 + 46 * p
 
     if region in REGIONS:
-        steps = 18
+        steps = 15
         for i in range(1, steps + 1):
             progress = i / steps
             fig = base_map()
-            add_region_marker(
-                fig, region,
-                size=8 + (target_size - 8) * progress,
-                color=color,
-                opacity=0.3 + 0.65 * progress,
-            )
+            fill_region(fig, region, color, opacity=0.15 + 0.65 * progress)
             map_slot.plotly_chart(fig, use_container_width=True, key=f"frame_{i}")
             time.sleep(0.03)
     else:
