@@ -81,9 +81,9 @@ def base_map():
         scope="asia",
         lataxis_range=[4, 21],
         lonaxis_range=[116, 128],
-        showland=True, landcolor="#eee4c9",
-        showocean=True, oceancolor="#bcdcea",
-        showcountries=True, countrycolor="#a89a72",
+        showland=True, landcolor="#c7c2b4",
+        showocean=False,
+        showcountries=False,
         showcoastlines=True, coastlinecolor="#8a7a52", coastlinewidth=1,
         showsubunits=False,
         showframe=False,
@@ -155,10 +155,7 @@ st.markdown(
     """
     <style>
     div[data-testid="stPlotlyChart"] {
-        border-radius: 14px;
-        overflow: hidden;
-        box-shadow: 0 4px 18px rgba(43,36,24,0.18);
-        border: 1px solid #d8cca3;
+        background: transparent;
     }
     </style>
     """,
