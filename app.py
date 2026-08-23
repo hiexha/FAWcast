@@ -1,5 +1,7 @@
 import time
 import math
+import csv
+import io
 import streamlit as st
 import plotly.graph_objects as go
 
@@ -35,6 +37,17 @@ TIER_ACTION = {
     "Very High Risk": "Issue an outbreak alert; recommend immediate response and intensive field surveillance.",
 }
 
+# Approximate plausible ranges for quarterly Philippine weather data.
+# NOTE: these are reasonable general estimates, not the exact min/max from
+# the study's Table I. Replace with the paper's actual reported ranges if
+# available, for a precise extrapolation warning.
+RANGES = {
+    "Max Temp (C)": (26.0, 36.0),
+    "Min Temp (C)": (19.0, 27.0),
+    "Rainfall (mm/day)": (0.0, 45.0),
+    "Relative Humidity (%)": (65.0, 95.0),
+}
+
 
 def classify(p):
     if p < 0.30: return "Low Risk"
@@ -44,12 +57,10 @@ def classify(p):
 
 
 def marker_size(area_km2):
-    """Converts real land area into a reasonable on-screen marker size (px)."""
     return 14 + 2.2 * math.sqrt(area_km2 / 1000)
 
 
 def base_map():
-    """Draws the Philippines only, with all 6 regions as small labeled gray markers."""
     lats = [v["lat"] for v in REGIONS.values()]
     lons = [v["lon"] for v in REGIONS.values()]
     names = list(REGIONS.keys())
@@ -106,9 +117,23 @@ def legend_row():
         )
 
 
+def check_out_of_range(values_by_label):
+    """values_by_label: dict of label -> value, checked against RANGES."""
+    flags = []
+    for label, value in values_by_label.items():
+        if label in RANGES:
+            lo, hi = RANGES[label]
+            if value < lo or value > hi:
+                flags.append(f"{label} = {value} (typical range: {lo}-{hi})")
+    return flags
+
+
 st.set_page_config(page_title="FAWcast Risk Calculator", layout="wide")
 st.title("FAWcast Outbreak-Risk Calculator")
 st.caption("Hierarchical logistic regression model - Table IV & V")
+
+if "history" not in st.session_state:
+    st.session_state.history = []
 
 region = st.selectbox("Region", list(REGIONS.keys()) + ["Untrained (population average)"])
 
@@ -136,6 +161,7 @@ legend_row()
 
 map_slot = st.empty()
 result_slot = st.empty()
+history_slot = st.empty()
 
 map_slot.plotly_chart(base_map(), use_container_width=True)
 
@@ -152,11 +178,47 @@ def compute_p(region_name):
     return 1 / (1 + 2.718281828 ** -log_odds), u
 
 
+def make_csv(rows, fieldnames):
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=fieldnames)
+    writer.writeheader()
+    for row in rows:
+        writer.writerow(row)
+    return buf.getvalue()
+
+
+def render_history():
+    if not st.session_state.history:
+        return
+    with history_slot.container():
+        st.divider()
+        st.write("**Session history** (this session only, resets if the app restarts):")
+        for h in reversed(st.session_state.history[-10:]):
+            st.write(f"- {h['region']}: {h['probability_pct']}% ({h['tier']})")
+        csv_text = make_csv(
+            st.session_state.history,
+            fieldnames=["region", "probability_pct", "tier", "tmax", "tmin", "rainfall",
+                        "humidity", "prev_outbreak", "prev_tmax", "prev_tmin",
+                        "prev_rainfall", "rain_cum_2q"],
+        )
+        st.download_button(
+            "Download full history as CSV",
+            data=csv_text,
+            file_name="fawcast_history.csv",
+            mime="text/csv",
+        )
+
+
 if calculate:
     p, u = compute_p(region)
     tier = classify(p)
     color = TIER_COLORS[tier]
     base_size = marker_size(REGIONS.get(region, {}).get("area_km2", 18000))
+
+    flags = check_out_of_range({
+        "Max Temp (C)": tmax, "Min Temp (C)": tmin,
+        "Rainfall (mm/day)": rainfall, "Relative Humidity (%)": humidity,
+    })
 
     if region in REGIONS:
         steps = 15
@@ -169,8 +231,22 @@ if calculate:
     else:
         map_slot.plotly_chart(base_map(), use_container_width=True)
 
+    record = {
+        "region": region, "probability_pct": round(p * 100, 1), "tier": tier,
+        "tmax": tmax, "tmin": tmin, "rainfall": rainfall, "humidity": humidity,
+        "prev_outbreak": prev_outbreak, "prev_tmax": prev_tmax, "prev_tmin": prev_tmin,
+        "prev_rainfall": prev_rainfall, "rain_cum_2q": rain_cum_2q,
+    }
+    st.session_state.history.append(record)
+
     with result_slot.container():
         st.divider()
+        if flags:
+            st.warning(
+                "Some inputs fall outside the typical range this baseline model was built on. "
+                "Treat this prediction as an extrapolation, with lower confidence:\n\n"
+                + "\n".join(f"- {f}" for f in flags)
+            )
         st.metric("P(Outbreak)", f"{p*100:.1f}%")
         st.markdown(f"**Risk Tier:** {tier}")
         st.caption(TIER_ACTION[tier])
@@ -178,22 +254,49 @@ if calculate:
             st.caption(f"Region used: {region} (u = {u:.4f})")
         else:
             st.caption("Region used: untrained, population average")
+        csv_text = make_csv([record], fieldnames=list(record.keys()))
+        st.download_button("Download this result as CSV", data=csv_text, file_name="fawcast_result.csv", mime="text/csv")
+
+    render_history()
 
 elif calculate_all:
     fig = base_map()
     rows = []
+    flags = check_out_of_range({
+        "Max Temp (C)": tmax, "Min Temp (C)": tmin,
+        "Rainfall (mm/day)": rainfall, "Relative Humidity (%)": humidity,
+    })
     for name in REGIONS:
         p, u = compute_p(name)
         tier = classify(p)
         color = TIER_COLORS[tier]
         size = marker_size(REGIONS[name]["area_km2"])
         add_region_marker(fig, name, size=size, color=color, opacity=0.85)
-        rows.append((name, p, tier))
+        record = {
+            "region": name, "probability_pct": round(p * 100, 1), "tier": tier,
+            "tmax": tmax, "tmin": tmin, "rainfall": rainfall, "humidity": humidity,
+            "prev_outbreak": prev_outbreak, "prev_tmax": prev_tmax, "prev_tmin": prev_tmin,
+            "prev_rainfall": prev_rainfall, "rain_cum_2q": rain_cum_2q,
+        }
+        rows.append(record)
+        st.session_state.history.append(record)
     map_slot.plotly_chart(fig, use_container_width=True)
 
     with result_slot.container():
         st.divider()
+        if flags:
+            st.warning(
+                "Some inputs fall outside the typical range this baseline model was built on. "
+                "Treat these predictions as an extrapolation, with lower confidence:\n\n"
+                + "\n".join(f"- {f}" for f in flags)
+            )
         st.write("**Risk by region** (using the weather values entered above):")
-        rows.sort(key=lambda x: x[1], reverse=True)
-        for name, p, tier in rows:
-            st.write(f"- {name}: {p*100:.1f}% ({tier})")
+        rows.sort(key=lambda x: x["probability_pct"], reverse=True)
+        for r in rows:
+            st.write(f"- {r['region']}: {r['probability_pct']}% ({r['tier']})")
+        csv_text = make_csv(rows, fieldnames=list(rows[0].keys()))
+        st.download_button("Download these results as CSV", data=csv_text, file_name="fawcast_all_regions.csv", mime="text/csv")
+
+    render_history()
+else:
+    render_history()
