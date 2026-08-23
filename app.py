@@ -46,6 +46,10 @@ RANGES = {
     "Min Temp (C)": (19.0, 27.0),
     "Rainfall (mm/day)": (0.0, 45.0),
     "Relative Humidity (%)": (65.0, 95.0),
+    "Prev. Max Temp (C)": (26.0, 36.0),
+    "Prev. Min Temp (C)": (19.0, 27.0),
+    "Prev. Rainfall (mm/day)": (0.0, 45.0),
+    "2-Qtr Cumulative Rain (mm)": (0.0, 90.0),
 }
 
 
@@ -218,6 +222,8 @@ if calculate:
     flags = check_out_of_range({
         "Max Temp (C)": tmax, "Min Temp (C)": tmin,
         "Rainfall (mm/day)": rainfall, "Relative Humidity (%)": humidity,
+        "Prev. Max Temp (C)": prev_tmax, "Prev. Min Temp (C)": prev_tmin,
+        "Prev. Rainfall (mm/day)": prev_rainfall, "2-Qtr Cumulative Rain (mm)": rain_cum_2q,
     })
 
     if region in REGIONS:
@@ -265,6 +271,8 @@ elif calculate_all:
     flags = check_out_of_range({
         "Max Temp (C)": tmax, "Min Temp (C)": tmin,
         "Rainfall (mm/day)": rainfall, "Relative Humidity (%)": humidity,
+        "Prev. Max Temp (C)": prev_tmax, "Prev. Min Temp (C)": prev_tmin,
+        "Prev. Rainfall (mm/day)": prev_rainfall, "2-Qtr Cumulative Rain (mm)": rain_cum_2q,
     })
     for name in REGIONS:
         p, u = compute_p(name)
