@@ -12,8 +12,6 @@ BETA = {
     "rain_cum_2q": 0.0643,
 }
 
-# Region random intercepts (Table V), centroid coordinates, and approximate
-# land area in sq km (used to size each region's marker proportionally)
 REGIONS = {
     "Bicol Region":          {"u": -0.2971, "lat": 13.42, "lon": 123.41, "area_km2": 18155},
     "Cagayan Valley":        {"u":  0.2989, "lat": 17.61, "lon": 121.73, "area_km2": 29836},
@@ -37,10 +35,6 @@ TIER_ACTION = {
     "Very High Risk": "Issue an outbreak alert; recommend immediate response and intensive field surveillance.",
 }
 
-# Approximate plausible ranges for quarterly Philippine weather data.
-# NOTE: these are reasonable general estimates, not the exact min/max from
-# the study's Table I. Replace with the paper's actual reported ranges if
-# available, for a precise extrapolation warning.
 RANGES = {
     "Max Temp (C)": (26.0, 36.0),
     "Min Temp (C)": (19.0, 27.0),
@@ -94,6 +88,7 @@ def base_map():
         margin=dict(l=0, r=0, t=10, b=0),
         height=520,
         showlegend=False,
+        paper_bgcolor="rgba(0,0,0,0)",
     )
     return fig
 
@@ -122,7 +117,6 @@ def legend_row():
 
 
 def check_out_of_range(values_by_label):
-    """values_by_label: dict of label -> value, checked against RANGES."""
     flags = []
     for label, value in values_by_label.items():
         if label in RANGES:
@@ -132,12 +126,60 @@ def check_out_of_range(values_by_label):
     return flags
 
 
+def make_csv(rows, fieldnames):
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=fieldnames)
+    writer.writeheader()
+    for row in rows:
+        writer.writerow(row)
+    return buf.getvalue()
+
+
 st.set_page_config(page_title="FAWcast Risk Calculator", layout="wide")
-st.title("FAWcast Outbreak-Risk Calculator")
-st.caption("Hierarchical logistic regression model - Table IV & V")
+
+st.markdown(
+    """
+    <div style="background:linear-gradient(135deg,#2f4d3a,#1f3527);padding:28px 24px;border-radius:8px;margin-bottom:18px;">
+        <div style="color:#c9dfc0;font-size:13px;letter-spacing:0.08em;text-transform:uppercase;">Fall Armyworm Early Warning</div>
+        <div style="color:#ffffff;font-size:32px;font-weight:700;margin-top:4px;">FAWcast Outbreak-Risk Calculator</div>
+        <div style="color:#d7e6d0;font-size:14px;margin-top:6px;">Hierarchical logistic regression model - Table IV & V</div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
 if "history" not in st.session_state:
     st.session_state.history = []
+if "last_result" not in st.session_state:
+    st.session_state.last_result = None
+
+with st.expander("About Fall Armyworm (Spodoptera frugiperda)", expanded=False):
+    st.markdown(
+        """
+- **Identity:** *Spodoptera frugiperda*, commonly the Fall Armyworm (FAW), is a moth species (Lepidoptera: Noctuidae) native to the Americas.
+- **Invasion history:** First reported outside the Americas in West Africa (2016), FAW spread rapidly across Asia. It was first validated in the Philippines in **June 2019**, initially detected in **Cagayan Valley**, one of the country's major corn-growing areas.
+- **Host range:** Highly polyphagous — it can feed on many plant species — but shows a strong preference for **maize/corn**, and is also reported on rice, sorghum, and sugarcane.
+- **Damage:** Larvae (caterpillars) cause the actual crop damage, feeding on leaves and the whorl, and can bore into developing ears. Adults are strong fliers capable of long-distance seasonal migration.
+- **Why it spreads fast:** Short development time and high reproductive rate allow populations to build up and spread quickly once established in an area.
+
+*Sources: Cabusas et al. (2024), Journal of Applied Entomology; Navasero & Navasero (2020), UPLB; CABI (2024).*
+        """
+    )
+
+with st.expander("Preventive Measures & Integrated Pest Management (IPM)", expanded=False):
+    st.markdown(
+        """
+Philippine agencies (DA, Bureau of Plant Industry) recommend an integrated approach — no single method is sufficient on its own:
+
+- **Field monitoring:** Regular scouting for egg masses and early-stage larvae, and pheromone traps to track adult moth activity, so action can be taken before damage becomes severe.
+- **Biological control:** Agents such as *Trichogramma* wasps (egg parasitoids), and the fungi *Metarhizium* and *Beauveria*, are produced and distributed by BPI Regional Crop Protection Centers for farmer use.
+- **Cultural practices:** Early planting, proper weed management, adequate fertilization and irrigation, crop rotation, and avoiding adjacent sequential planting all reduce the conditions FAW thrives in.
+- **Chemical control as a last resort:** IPM guidance treats insecticides as a final option, guided by field-assessed economic injury thresholds rather than routine spraying, to limit cost and harm to natural enemies of the pest.
+- **Coordination:** Confirmed or suspected outbreaks should be reported to the local agricultural extension office or BPI Regional Crop Protection Center.
+
+*Sources: Department of Agriculture (da.gov.ph); BPI Crop Pest Management Division; Philippine News Agency (2020).*
+        """
+    )
 
 region = st.selectbox("Region", list(REGIONS.keys()) + ["Untrained (population average)"])
 
@@ -167,8 +209,6 @@ map_slot = st.empty()
 result_slot = st.empty()
 history_slot = st.empty()
 
-map_slot.plotly_chart(base_map(), use_container_width=True)
-
 
 def compute_p(region_name):
     u = REGIONS.get(region_name, {}).get("u", 0.0)
@@ -180,15 +220,6 @@ def compute_p(region_name):
         BETA["prev_tmin"] * prev_tmin + BETA["rain_cum_2q"] * rain_cum_2q + u
     )
     return 1 / (1 + 2.718281828 ** -log_odds), u
-
-
-def make_csv(rows, fieldnames):
-    buf = io.StringIO()
-    writer = csv.DictWriter(buf, fieldnames=fieldnames)
-    writer.writeheader()
-    for row in rows:
-        writer.writerow(row)
-    return buf.getvalue()
 
 
 def render_history():
@@ -213,11 +244,11 @@ def render_history():
         )
 
 
-if calculate:
-    p, u = compute_p(region)
+def run_single(region_name, animate=True):
+    p, u = compute_p(region_name)
     tier = classify(p)
     color = TIER_COLORS[tier]
-    base_size = marker_size(REGIONS.get(region, {}).get("area_km2", 18000))
+    base_size = marker_size(REGIONS.get(region_name, {}).get("area_km2", 18000))
 
     flags = check_out_of_range({
         "Max Temp (C)": tmax, "Min Temp (C)": tmin,
@@ -226,24 +257,21 @@ if calculate:
         "Prev. Rainfall (mm/day)": prev_rainfall, "2-Qtr Cumulative Rain (mm)": rain_cum_2q,
     })
 
-    if region in REGIONS:
-        steps = 15
-        for i in range(1, steps + 1):
-            progress = i / steps
+    if region_name in REGIONS:
+        if animate:
+            steps = 15
+            for i in range(1, steps + 1):
+                progress = i / steps
+                fig = base_map()
+                add_region_marker(fig, region_name, size=base_size * (0.3 + 0.7 * progress), color=color, opacity=0.3 + 0.65 * progress)
+                map_slot.plotly_chart(fig, use_container_width=True, key=f"frame_{i}_{time.time()}")
+                time.sleep(0.03)
+        else:
             fig = base_map()
-            add_region_marker(fig, region, size=base_size * (0.3 + 0.7 * progress), color=color, opacity=0.3 + 0.65 * progress)
-            map_slot.plotly_chart(fig, use_container_width=True, key=f"frame_{i}")
-            time.sleep(0.03)
+            add_region_marker(fig, region_name, size=base_size, color=color, opacity=0.95)
+            map_slot.plotly_chart(fig, use_container_width=True)
     else:
         map_slot.plotly_chart(base_map(), use_container_width=True)
-
-    record = {
-        "region": region, "probability_pct": round(p * 100, 1), "tier": tier,
-        "tmax": tmax, "tmin": tmin, "rainfall": rainfall, "humidity": humidity,
-        "prev_outbreak": prev_outbreak, "prev_tmax": prev_tmax, "prev_tmin": prev_tmin,
-        "prev_rainfall": prev_rainfall, "rain_cum_2q": rain_cum_2q,
-    }
-    st.session_state.history.append(record)
 
     with result_slot.container():
         st.divider()
@@ -256,13 +284,24 @@ if calculate:
         st.metric("P(Outbreak)", f"{p*100:.1f}%")
         st.markdown(f"**Risk Tier:** {tier}")
         st.caption(TIER_ACTION[tier])
-        if region in REGIONS:
-            st.caption(f"Region used: {region} (u = {u:.4f})")
+        if region_name in REGIONS:
+            st.caption(f"Region used: {region_name} (u = {u:.4f})")
         else:
             st.caption("Region used: untrained, population average")
+        record = {
+            "region": region_name, "probability_pct": round(p * 100, 1), "tier": tier,
+            "tmax": tmax, "tmin": tmin, "rainfall": rainfall, "humidity": humidity,
+            "prev_outbreak": prev_outbreak, "prev_tmax": prev_tmax, "prev_tmin": prev_tmin,
+            "prev_rainfall": prev_rainfall, "rain_cum_2q": rain_cum_2q,
+        }
         csv_text = make_csv([record], fieldnames=list(record.keys()))
-        st.download_button("Download this result as CSV", data=csv_text, file_name="fawcast_result.csv", mime="text/csv")
+        st.download_button("Download this result as CSV", data=csv_text, file_name="fawcast_result.csv", mime="text/csv", key=f"dl_{time.time()}")
+        return record
 
+
+if calculate:
+    record = run_single(region, animate=True)
+    st.session_state.history.append(record)
     render_history()
 
 elif calculate_all:
@@ -306,5 +345,8 @@ elif calculate_all:
         st.download_button("Download these results as CSV", data=csv_text, file_name="fawcast_all_regions.csv", mime="text/csv")
 
     render_history()
+
 else:
+    # Default view on first load: auto-show a colored result instead of a plain gray map
+    run_single(region, animate=False)
     render_history()
