@@ -58,6 +58,10 @@ def marker_size(area_km2):
     return 14 + 2.2 * math.sqrt(area_km2 / 1000)
 
 
+MAP_WIDTH = 460
+MAP_HEIGHT = 667
+
+
 def base_map():
     lats = [v["lat"] for v in REGIONS.values()]
     lons = [v["lon"] for v in REGIONS.values()]
@@ -77,16 +81,19 @@ def base_map():
         scope="asia",
         lataxis_range=[4, 21],
         lonaxis_range=[116, 128],
-        showland=True, landcolor="#f0ead9",
-        showocean=True, oceancolor="#dce8ec",
-        showcountries=True, countrycolor="#b5aa8f",
-        showcoastlines=True, coastlinecolor="#b5aa8f",
+        showland=True, landcolor="#eee4c9",
+        showocean=True, oceancolor="#bcdcea",
+        showcountries=True, countrycolor="#a89a72",
+        showcoastlines=True, coastlinecolor="#8a7a52", coastlinewidth=1,
         showsubunits=False,
+        showframe=False,
+        bgcolor="rgba(0,0,0,0)",
         resolution=50,
     )
     fig.update_layout(
         margin=dict(l=0, r=0, t=10, b=0),
-        height=520,
+        width=MAP_WIDTH,
+        height=MAP_HEIGHT,
         showlegend=False,
         paper_bgcolor="rgba(0,0,0,0)",
     )
@@ -103,6 +110,13 @@ def add_region_marker(fig, region_name, size, color, opacity):
         showlegend=False,
     ))
     return fig
+
+
+def show_map(fig, key=None):
+    with map_slot.container():
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            st.plotly_chart(fig, use_container_width=False, config={"displayModeBar": False}, key=key)
 
 
 def legend_row():
@@ -139,6 +153,20 @@ st.set_page_config(page_title="FAWcast Risk Calculator", layout="wide")
 
 st.markdown(
     """
+    <style>
+    div[data-testid="stPlotlyChart"] {
+        border-radius: 14px;
+        overflow: hidden;
+        box-shadow: 0 4px 18px rgba(43,36,24,0.18);
+        border: 1px solid #d8cca3;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+st.markdown(
+    """
     <div style="background:linear-gradient(135deg,#2f4d3a,#1f3527);padding:28px 24px;border-radius:8px;margin-bottom:18px;">
         <div style="color:#c9dfc0;font-size:13px;letter-spacing:0.08em;text-transform:uppercase;">Fall Armyworm Early Warning</div>
         <div style="color:#ffffff;font-size:32px;font-weight:700;margin-top:4px;">FAWcast Outbreak-Risk Calculator</div>
@@ -158,7 +186,7 @@ with st.expander("About Fall Armyworm (Spodoptera frugiperda)", expanded=False):
         """
 - **Identity:** *Spodoptera frugiperda*, commonly the Fall Armyworm (FAW), is a moth species (Lepidoptera: Noctuidae) native to the Americas.
 - **Invasion history:** First reported outside the Americas in West Africa (2016), FAW spread rapidly across Asia. It was first validated in the Philippines in **June 2019**, initially detected in **Cagayan Valley**, one of the country's major corn-growing areas.
-- **Host range:** Highly polyphagous — it can feed on many plant species — but shows a strong preference for **maize/corn**, and is also reported on rice, sorghum, and sugarcane.
+- **Host range:** Highly polyphagous - it can feed on many plant species - but shows a strong preference for **maize/corn**, and is also reported on rice, sorghum, and sugarcane.
 - **Damage:** Larvae (caterpillars) cause the actual crop damage, feeding on leaves and the whorl, and can bore into developing ears. Adults are strong fliers capable of long-distance seasonal migration.
 - **Why it spreads fast:** Short development time and high reproductive rate allow populations to build up and spread quickly once established in an area.
 
@@ -169,7 +197,7 @@ with st.expander("About Fall Armyworm (Spodoptera frugiperda)", expanded=False):
 with st.expander("Preventive Measures & Integrated Pest Management (IPM)", expanded=False):
     st.markdown(
         """
-Philippine agencies (DA, Bureau of Plant Industry) recommend an integrated approach — no single method is sufficient on its own:
+Philippine agencies (DA, Bureau of Plant Industry) recommend an integrated approach - no single method is sufficient on its own:
 
 - **Field monitoring:** Regular scouting for egg masses and early-stage larvae, and pheromone traps to track adult moth activity, so action can be taken before damage becomes severe.
 - **Biological control:** Agents such as *Trichogramma* wasps (egg parasitoids), and the fungi *Metarhizium* and *Beauveria*, are produced and distributed by BPI Regional Crop Protection Centers for farmer use.
@@ -264,14 +292,14 @@ def run_single(region_name, animate=True):
                 progress = i / steps
                 fig = base_map()
                 add_region_marker(fig, region_name, size=base_size * (0.3 + 0.7 * progress), color=color, opacity=0.3 + 0.65 * progress)
-                map_slot.plotly_chart(fig, use_container_width=True, key=f"frame_{i}_{time.time()}")
+                show_map(fig, key=f"frame_{i}_{time.time()}")
                 time.sleep(0.03)
         else:
             fig = base_map()
             add_region_marker(fig, region_name, size=base_size, color=color, opacity=0.95)
-            map_slot.plotly_chart(fig, use_container_width=True)
+            show_map(fig, key="single_static")
     else:
-        map_slot.plotly_chart(base_map(), use_container_width=True)
+        show_map(base_map(), key="single_untrained")
 
     with result_slot.container():
         st.divider()
@@ -327,7 +355,7 @@ elif calculate_all:
         }
         rows.append(record)
         st.session_state.history.append(record)
-    map_slot.plotly_chart(fig, use_container_width=True)
+    show_map(fig, key="all_regions")
 
     with result_slot.container():
         st.divider()
