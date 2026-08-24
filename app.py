@@ -76,12 +76,11 @@ def make_choropleth(shapes, highlighted=None, color=None, opacity=1.0):
             geojson={"type": "FeatureCollection", "features": [feature]},
             locations=[fid],
             z=[1],
-            featureidkey="id",
-            colorscale=[[0, color if is_highlighted else "#e8e2cf"], [1, color if is_highlighted else "#e8e2cf"]],
+            colorscale=[[0, color if is_highlighted else "#c9bb8a"], [1, color if is_highlighted else "#c9bb8a"]],
             showscale=False,
-            marker_line_color="#2b2418" if is_highlighted else "#8a7a52",
-            marker_line_width=1.5 if is_highlighted else 0.8,
-            marker_opacity=opacity if is_highlighted else 0.5,
+            marker_line_color="#2b2418" if is_highlighted else "#5c4f2f",
+            marker_line_width=1.5 if is_highlighted else 1.0,
+            marker_opacity=opacity if is_highlighted else 0.85,
             hoverinfo="skip",
         ))
 
