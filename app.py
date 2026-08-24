@@ -1,9 +1,7 @@
 import time
-import math
-import csv
-import io
 import streamlit as st
 import plotly.graph_objects as go
+import requests
 
 BETA = {
     "intercept": -32.6401, "tmax": 0.2790, "tmin": -0.3650,
@@ -12,13 +10,16 @@ BETA = {
     "rain_cum_2q": 0.0643,
 }
 
+# Region random intercepts (Table V). Real boundary shapes are fetched at
+# runtime and matched to these names by substring match against the
+# "adm1_en" property in the source data (e.g. "Region I (Ilocos Region)").
 REGIONS = {
-    "Bicol Region":          {"u": -0.2971, "lat": 13.42, "lon": 123.41, "area_km2": 18155},
-    "Cagayan Valley":        {"u":  0.2989, "lat": 17.61, "lon": 121.73, "area_km2": 29836},
-    "Ilocos Region":         {"u": -1.6065, "lat": 16.08, "lon": 120.62, "area_km2": 13012},
-    "Northern Mindanao":     {"u":  0.1275, "lat":  8.15, "lon": 124.24, "area_km2": 20496},
-    "SOCCSKSARGEN":          {"u":  0.9616, "lat":  6.30, "lon": 124.85, "area_km2": 22513},
-    "Zamboanga Peninsula":   {"u":  0.5156, "lat":  7.84, "lon": 122.27, "area_km2": 17056},
+    "Bicol Region":          {"u": -0.2971},
+    "Cagayan Valley":        {"u":  0.2989},
+    "Ilocos Region":         {"u": -1.6065},
+    "Northern Mindanao":     {"u":  0.1275},
+    "SOCCSKSARGEN":          {"u":  0.9616},
+    "Zamboanga Peninsula":   {"u":  0.5156},
 }
 
 TIER_COLORS = {
@@ -35,16 +36,7 @@ TIER_ACTION = {
     "Very High Risk": "Issue an outbreak alert; recommend immediate response and intensive field surveillance.",
 }
 
-RANGES = {
-    "Max Temp (C)": (26.0, 36.0),
-    "Min Temp (C)": (19.0, 27.0),
-    "Rainfall (mm/day)": (0.0, 45.0),
-    "Relative Humidity (%)": (65.0, 95.0),
-    "Prev. Max Temp (C)": (26.0, 36.0),
-    "Prev. Min Temp (C)": (19.0, 27.0),
-    "Prev. Rainfall (mm/day)": (0.0, 45.0),
-    "2-Qtr Cumulative Rain (mm)": (0.0, 90.0),
-}
+GEOJSON_URL = "https://raw.githubusercontent.com/faeldon/philippines-json-maps/master/2023/geojson/country/lowres/country.0.001.json"
 
 
 def classify(p):
@@ -54,61 +46,63 @@ def classify(p):
     return "Very High Risk"
 
 
-def marker_size(area_km2):
-    return 14 + 2.2 * math.sqrt(area_km2 / 1000)
+@st.cache_data(ttl=86400)
+def load_region_shapes():
+    """Fetches the real Philippine region boundaries and matches each of
+    our 6 study regions to its feature by name. Returns a dict:
+    short_name -> (geojson_feature, feature_id)."""
+    resp = requests.get(GEOJSON_URL, timeout=20)
+    resp.raise_for_status()
+    data = resp.json()
+
+    matches = {}
+    for feature in data["features"]:
+        name_en = feature.get("properties", {}).get("adm1_en", "")
+        for short_name in REGIONS:
+            if short_name.lower() in name_en.lower():
+                matches[short_name] = (feature, feature.get("id"))
+    return matches
 
 
-MAP_WIDTH = 460
-MAP_HEIGHT = 667
+def make_choropleth(shapes, highlighted=None, color=None, opacity=1.0):
+    """Draws all 6 regions. Regions in `highlighted` (a list of names) are
+    filled with `color`; all others are drawn in a neutral gray outline."""
+    highlighted = highlighted or []
+    fig = go.Figure()
 
+    for name, (feature, fid) in shapes.items():
+        is_highlighted = name in highlighted
+        fig.add_trace(go.Choropleth(
+            geojson={"type": "FeatureCollection", "features": [feature]},
+            locations=[fid],
+            z=[1],
+            featureidkey="id",
+            colorscale=[[0, color if is_highlighted else "#e8e2cf"], [1, color if is_highlighted else "#e8e2cf"]],
+            showscale=False,
+            marker_line_color="#2b2418" if is_highlighted else "#8a7a52",
+            marker_line_width=1.5 if is_highlighted else 0.8,
+            marker_opacity=opacity if is_highlighted else 0.5,
+            hoverinfo="skip",
+        ))
 
-def base_map():
-    lats = [v["lat"] for v in REGIONS.values()]
-    lons = [v["lon"] for v in REGIONS.values()]
-    names = list(REGIONS.keys())
-    sizes = [marker_size(v["area_km2"]) for v in REGIONS.values()]
-
-    fig = go.Figure(go.Scattergeo(
-        lat=lats, lon=lons,
-        text=names,
-        mode="markers+text",
-        textposition="top center",
-        textfont=dict(size=10, color="#4a4030"),
-        marker=dict(size=sizes, color="#c9c2ab", opacity=0.7, line=dict(width=1.3, color="#6b5f4a")),
-        hoverinfo="text",
-    ))
     fig.update_geos(
         scope="asia",
         lataxis_range=[4, 21],
         lonaxis_range=[116, 128],
-        showland=True, landcolor="#c7c2b4",
+        showland=False,
         showocean=False,
         showcountries=False,
-        showcoastlines=True, coastlinecolor="#8a7a52", coastlinewidth=1,
-        showsubunits=False,
+        showcoastlines=False,
         showframe=False,
         bgcolor="rgba(0,0,0,0)",
-        resolution=50,
     )
     fig.update_layout(
         margin=dict(l=0, r=0, t=10, b=0),
-        width=MAP_WIDTH,
-        height=MAP_HEIGHT,
+        width=460,
+        height=667,
         showlegend=False,
         paper_bgcolor="rgba(0,0,0,0)",
     )
-    return fig
-
-
-def add_region_marker(fig, region_name, size, color, opacity):
-    r = REGIONS[region_name]
-    fig.add_trace(go.Scattergeo(
-        lat=[r["lat"]], lon=[r["lon"]],
-        mode="markers",
-        marker=dict(size=size, color=color, opacity=opacity, line=dict(width=2, color="#2b2418")),
-        hoverinfo="skip",
-        showlegend=False,
-    ))
     return fig
 
 
@@ -119,48 +113,7 @@ def show_map(fig, key=None):
             st.plotly_chart(fig, use_container_width=False, config={"displayModeBar": False}, key=key)
 
 
-def legend_row():
-    cols = st.columns(4)
-    for col, (tier, color) in zip(cols, TIER_COLORS.items()):
-        col.markdown(
-            f'<div style="display:flex;align-items:center;gap:6px;font-size:12px;">'
-            f'<div style="width:12px;height:12px;border-radius:50%;background:{color};"></div>'
-            f'{tier}</div>',
-            unsafe_allow_html=True,
-        )
-
-
-def check_out_of_range(values_by_label):
-    flags = []
-    for label, value in values_by_label.items():
-        if label in RANGES:
-            lo, hi = RANGES[label]
-            if value < lo or value > hi:
-                flags.append(f"{label} = {value} (typical range: {lo}-{hi})")
-    return flags
-
-
-def make_csv(rows, fieldnames):
-    buf = io.StringIO()
-    writer = csv.DictWriter(buf, fieldnames=fieldnames)
-    writer.writeheader()
-    for row in rows:
-        writer.writerow(row)
-    return buf.getvalue()
-
-
 st.set_page_config(page_title="FAWcast Risk Calculator", layout="wide")
-
-st.markdown(
-    """
-    <style>
-    div[data-testid="stPlotlyChart"] {
-        background: transparent;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
 
 st.markdown(
     """
@@ -173,38 +126,33 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-if "history" not in st.session_state:
-    st.session_state.history = []
-if "last_result" not in st.session_state:
-    st.session_state.last_result = None
-
 with st.expander("About Fall Armyworm (Spodoptera frugiperda)", expanded=False):
     st.markdown(
         """
 - **Identity:** *Spodoptera frugiperda*, commonly the Fall Armyworm (FAW), is a moth species (Lepidoptera: Noctuidae) native to the Americas.
 - **Invasion history:** First reported outside the Americas in West Africa (2016), FAW spread rapidly across Asia. It was first validated in the Philippines in **June 2019**, initially detected in **Cagayan Valley**, one of the country's major corn-growing areas.
-- **Host range:** Highly polyphagous - it can feed on many plant species - but shows a strong preference for **maize/corn**, and is also reported on rice, sorghum, and sugarcane.
-- **Damage:** Larvae (caterpillars) cause the actual crop damage, feeding on leaves and the whorl, and can bore into developing ears. Adults are strong fliers capable of long-distance seasonal migration.
-- **Why it spreads fast:** Short development time and high reproductive rate allow populations to build up and spread quickly once established in an area.
+- **Host range:** Highly polyphagous, but shows a strong preference for **maize/corn**, and is also reported on rice, sorghum, and sugarcane.
+- **Damage:** Larvae cause the actual crop damage, feeding on leaves and the whorl, and can bore into developing ears.
 
-*Sources: Cabusas et al. (2024), Journal of Applied Entomology; Navasero & Navasero (2020), UPLB; CABI (2024).*
+*Sources: Cabusas et al. (2024); Navasero & Navasero (2020), UPLB; CABI (2024).*
         """
     )
 
 with st.expander("Preventive Measures & Integrated Pest Management (IPM)", expanded=False):
     st.markdown(
         """
-Philippine agencies (DA, Bureau of Plant Industry) recommend an integrated approach - no single method is sufficient on its own:
+- **Field monitoring:** Regular scouting for egg masses and early-stage larvae, plus pheromone traps to track adult moth activity.
+- **Biological control:** *Trichogramma* wasps and the fungi *Metarhizium* and *Beauveria*, distributed by BPI Regional Crop Protection Centers.
+- **Cultural practices:** Early planting, weed management, adequate fertilization/irrigation, crop rotation.
+- **Chemical control as a last resort:** guided by field-assessed economic injury thresholds, not routine spraying.
+- **Coordination:** report confirmed or suspected outbreaks to the local agricultural extension office.
 
-- **Field monitoring:** Regular scouting for egg masses and early-stage larvae, and pheromone traps to track adult moth activity, so action can be taken before damage becomes severe.
-- **Biological control:** Agents such as *Trichogramma* wasps (egg parasitoids), and the fungi *Metarhizium* and *Beauveria*, are produced and distributed by BPI Regional Crop Protection Centers for farmer use.
-- **Cultural practices:** Early planting, proper weed management, adequate fertilization and irrigation, crop rotation, and avoiding adjacent sequential planting all reduce the conditions FAW thrives in.
-- **Chemical control as a last resort:** IPM guidance treats insecticides as a final option, guided by field-assessed economic injury thresholds rather than routine spraying, to limit cost and harm to natural enemies of the pest.
-- **Coordination:** Confirmed or suspected outbreaks should be reported to the local agricultural extension office or BPI Regional Crop Protection Center.
-
-*Sources: Department of Agriculture (da.gov.ph); BPI Crop Pest Management Division; Philippine News Agency (2020).*
+*Sources: Department of Agriculture (da.gov.ph); BPI Crop Pest Management Division.*
         """
     )
+
+if "history" not in st.session_state:
+    st.session_state.history = []
 
 region = st.selectbox("Region", list(REGIONS.keys()) + ["Untrained (population average)"])
 
@@ -223,16 +171,22 @@ prev_tmin = c4.number_input("Prev. Min Temp (C)", value=23.2)
 prev_rainfall = c3.number_input("Prev. Rainfall (mm/day)", value=21.6)
 rain_cum_2q = c4.number_input("2-Qtr Cumulative Rain (mm)", value=43.2)
 
-col_a, col_b = st.columns(2)
-calculate = col_a.button("Calculate Risk (selected region)", type="primary")
-calculate_all = col_b.button("Show Risk for All Regions")
-
-st.caption("Legend:")
-legend_row()
+calculate = st.button("Calculate Risk", type="primary")
 
 map_slot = st.empty()
 result_slot = st.empty()
-history_slot = st.empty()
+
+try:
+    shapes = load_region_shapes()
+    map_load_error = None
+except Exception as e:
+    shapes = {}
+    map_load_error = str(e)
+
+if map_load_error:
+    st.error(f"Could not load region boundaries: {map_load_error}")
+else:
+    show_map(make_choropleth(shapes), key="initial")
 
 
 def compute_p(region_name):
@@ -247,131 +201,35 @@ def compute_p(region_name):
     return 1 / (1 + 2.718281828 ** -log_odds), u
 
 
-def render_history():
-    if not st.session_state.history:
-        return
-    with history_slot.container():
-        st.divider()
-        st.write("**Session history** (this session only, resets if the app restarts):")
-        for h in reversed(st.session_state.history[-10:]):
-            st.write(f"- {h['region']}: {h['probability_pct']}% ({h['tier']})")
-        csv_text = make_csv(
-            st.session_state.history,
-            fieldnames=["region", "probability_pct", "tier", "tmax", "tmin", "rainfall",
-                        "humidity", "prev_outbreak", "prev_tmax", "prev_tmin",
-                        "prev_rainfall", "rain_cum_2q"],
-        )
-        st.download_button(
-            "Download full history as CSV",
-            data=csv_text,
-            file_name="fawcast_history.csv",
-            mime="text/csv",
-        )
-
-
-def run_single(region_name, animate=True):
-    p, u = compute_p(region_name)
+if calculate and not map_load_error:
+    p, u = compute_p(region)
     tier = classify(p)
     color = TIER_COLORS[tier]
-    base_size = marker_size(REGIONS.get(region_name, {}).get("area_km2", 18000))
 
-    flags = check_out_of_range({
-        "Max Temp (C)": tmax, "Min Temp (C)": tmin,
-        "Rainfall (mm/day)": rainfall, "Relative Humidity (%)": humidity,
-        "Prev. Max Temp (C)": prev_tmax, "Prev. Min Temp (C)": prev_tmin,
-        "Prev. Rainfall (mm/day)": prev_rainfall, "2-Qtr Cumulative Rain (mm)": rain_cum_2q,
-    })
-
-    if region_name in REGIONS:
-        if animate:
-            steps = 15
-            for i in range(1, steps + 1):
-                progress = i / steps
-                fig = base_map()
-                add_region_marker(fig, region_name, size=base_size * (0.3 + 0.7 * progress), color=color, opacity=0.3 + 0.65 * progress)
-                show_map(fig, key=f"frame_{i}_{time.time()}")
-                time.sleep(0.03)
-        else:
-            fig = base_map()
-            add_region_marker(fig, region_name, size=base_size, color=color, opacity=0.95)
-            show_map(fig, key="single_static")
+    if region in shapes:
+        steps = 12
+        for i in range(1, steps + 1):
+            progress = i / steps
+            fig = make_choropleth(shapes, highlighted=[region], color=color, opacity=0.25 + 0.7 * progress)
+            show_map(fig, key=f"frame_{i}_{time.time()}")
+            time.sleep(0.04)
     else:
-        show_map(base_map(), key="single_untrained")
+        show_map(make_choropleth(shapes), key="untrained")
 
     with result_slot.container():
         st.divider()
-        if flags:
-            st.warning(
-                "Some inputs fall outside the typical range this baseline model was built on. "
-                "Treat this prediction as an extrapolation, with lower confidence:\n\n"
-                + "\n".join(f"- {f}" for f in flags)
-            )
         st.metric("P(Outbreak)", f"{p*100:.1f}%")
         st.markdown(f"**Risk Tier:** {tier}")
         st.caption(TIER_ACTION[tier])
-        if region_name in REGIONS:
-            st.caption(f"Region used: {region_name} (u = {u:.4f})")
+        if region in REGIONS:
+            st.caption(f"Region used: {region} (u = {u:.4f})")
         else:
             st.caption("Region used: untrained, population average")
-        record = {
-            "region": region_name, "probability_pct": round(p * 100, 1), "tier": tier,
-            "tmax": tmax, "tmin": tmin, "rainfall": rainfall, "humidity": humidity,
-            "prev_outbreak": prev_outbreak, "prev_tmax": prev_tmax, "prev_tmin": prev_tmin,
-            "prev_rainfall": prev_rainfall, "rain_cum_2q": rain_cum_2q,
-        }
-        csv_text = make_csv([record], fieldnames=list(record.keys()))
-        st.download_button("Download this result as CSV", data=csv_text, file_name="fawcast_result.csv", mime="text/csv", key=f"dl_{time.time()}")
-        return record
 
+    st.session_state.history.append({"region": region, "probability_pct": round(p * 100, 1), "tier": tier})
 
-if calculate:
-    record = run_single(region, animate=True)
-    st.session_state.history.append(record)
-    render_history()
-
-elif calculate_all:
-    fig = base_map()
-    rows = []
-    flags = check_out_of_range({
-        "Max Temp (C)": tmax, "Min Temp (C)": tmin,
-        "Rainfall (mm/day)": rainfall, "Relative Humidity (%)": humidity,
-        "Prev. Max Temp (C)": prev_tmax, "Prev. Min Temp (C)": prev_tmin,
-        "Prev. Rainfall (mm/day)": prev_rainfall, "2-Qtr Cumulative Rain (mm)": rain_cum_2q,
-    })
-    for name in REGIONS:
-        p, u = compute_p(name)
-        tier = classify(p)
-        color = TIER_COLORS[tier]
-        size = marker_size(REGIONS[name]["area_km2"])
-        add_region_marker(fig, name, size=size, color=color, opacity=0.85)
-        record = {
-            "region": name, "probability_pct": round(p * 100, 1), "tier": tier,
-            "tmax": tmax, "tmin": tmin, "rainfall": rainfall, "humidity": humidity,
-            "prev_outbreak": prev_outbreak, "prev_tmax": prev_tmax, "prev_tmin": prev_tmin,
-            "prev_rainfall": prev_rainfall, "rain_cum_2q": rain_cum_2q,
-        }
-        rows.append(record)
-        st.session_state.history.append(record)
-    show_map(fig, key="all_regions")
-
-    with result_slot.container():
-        st.divider()
-        if flags:
-            st.warning(
-                "Some inputs fall outside the typical range this baseline model was built on. "
-                "Treat these predictions as an extrapolation, with lower confidence:\n\n"
-                + "\n".join(f"- {f}" for f in flags)
-            )
-        st.write("**Risk by region** (using the weather values entered above):")
-        rows.sort(key=lambda x: x["probability_pct"], reverse=True)
-        for r in rows:
-            st.write(f"- {r['region']}: {r['probability_pct']}% ({r['tier']})")
-        csv_text = make_csv(rows, fieldnames=list(rows[0].keys()))
-        st.download_button("Download these results as CSV", data=csv_text, file_name="fawcast_all_regions.csv", mime="text/csv")
-
-    render_history()
-
-else:
-    # Default view on first load: auto-show a colored result instead of a plain gray map
-    run_single(region, animate=False)
-    render_history()
+if st.session_state.history:
+    st.divider()
+    st.write("**Session history:**")
+    for h in reversed(st.session_state.history[-10:]):
+        st.write(f"- {h['region']}: {h['probability_pct']}% ({h['tier']})")
